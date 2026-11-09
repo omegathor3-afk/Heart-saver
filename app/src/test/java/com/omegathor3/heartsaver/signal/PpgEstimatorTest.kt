@@ -6,6 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
 import kotlin.math.sin
+import kotlin.random.Random
 
 class PpgEstimatorTest {
     private val estimator = PpgEstimator(sampleRateHz = 30.0)
@@ -17,6 +18,16 @@ class PpgEstimatorTest {
         val result = estimator.estimate(samples)
         assertTrue(result != null)
         assertTrue(kotlin.math.abs(result!!.bpm - 72) <= 2)
+    }
+
+    @Test fun estimatesPulseWithDeterministicNoiseAndFractionalPeriod() {
+        val random = Random(42)
+        val samples = (0 until 600).map { i ->
+            110.0 + 7.0 * sin(2.0 * PI * 1.23 * i / 30.0) + random.nextDouble(-1.2, 1.2)
+        }
+        val result = estimator.estimate(samples)
+        assertTrue(result != null)
+        assertTrue(kotlin.math.abs(result!!.bpm - 74) <= 2)
     }
 
     @Test fun rejectsSignalThatIsTooShort() {
