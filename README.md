@@ -16,7 +16,7 @@ The phone illuminates a fingertip with its camera flash. Camera frames are proce
 - [x] GitHub Actions debug APK build and unit-test workflow
 - [x] Synthetic signal tests and invalid-input rejection
 - [x] Fixed-rate 30 Hz resampling from camera timestamps
-- [x] Optical checks for fingertip color, low/high brightness and clipped highlights
+- [x] Optical checks for fingertip color, low/high brightness, clipped highlights and spatial fingertip coverage
 - [x] Reject abrupt frame-to-frame changes associated with movement or pressure shifts
 - [x] Clear buffered samples after invalid frames so stale readings are not reused
 - [x] Multi-window median confirmation before displaying BPM
