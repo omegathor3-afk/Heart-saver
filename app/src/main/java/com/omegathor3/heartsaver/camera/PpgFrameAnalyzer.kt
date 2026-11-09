@@ -73,7 +73,8 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 onUpdate(PpgFrameState(
                     status = "Keep still — collecting pulse signal",
                     progress = (samples.size.toFloat() / 240).coerceIn(0f, 1f),
-                    sampleCount = samples.size
+                    sampleCount = samples.size,
+                    waveform = normalizedWaveform()
                 ))
                 return
             }
@@ -86,13 +87,15 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                         bpm = estimate.bpm,
                         confidence = estimate.confidence,
                         progress = 1f,
-                        sampleCount = samples.size
+                        sampleCount = samples.size,
+                        waveform = normalizedWaveform()
                     ))
                 } else {
                     onUpdate(PpgFrameState(
                         status = "Signal is unstable — adjust fingertip pressure and stay still",
                         progress = 1f,
-                        sampleCount = samples.size
+                        sampleCount = samples.size,
+                        waveform = normalizedWaveform()
                     ))
                 }
             }
@@ -101,6 +104,15 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
         } finally {
             image.close()
         }
+    }
+
+    private fun normalizedWaveform(): List<Float> {
+        val values = samples.toList().takeLast(90)
+        if (values.isEmpty()) return emptyList()
+        val mean = values.average()
+        val centered = values.map { it - mean }
+        val scale = centered.maxOf { kotlin.math.abs(it) }.coerceAtLeast(0.01)
+        return centered.map { (it / scale).toFloat().coerceIn(-1f, 1f) }
     }
 
     private fun reset() {
@@ -115,5 +127,6 @@ data class PpgFrameState(
     val bpm: Int? = null,
     val confidence: Double = 0.0,
     val progress: Float = 0f,
-    val sampleCount: Int = 0
+    val sampleCount: Int = 0,
+    val waveform: List<Float> = emptyList()
 )
