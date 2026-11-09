@@ -46,6 +46,7 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             var greenSum = 0L
             var blueSum = 0L
             var clipped = 0
+            var fingerPixels = 0
             var count = 0
             for (y in top until bottom step 8) {
                 for (x in left until right step 8) {
@@ -58,6 +59,10 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                     greenSum += green
                     blueSum += blue
                     if (red >= 250 || green >= 250 || blue >= 250) clipped++
+                    if (red >= PpgFrameQuality.MIN_RED &&
+                        red > green * PpgFrameQuality.RED_GREEN_RATIO &&
+                        red > blue * PpgFrameQuality.RED_BLUE_RATIO
+                    ) fingerPixels++
                     count++
                 }
             }
@@ -71,7 +76,8 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 red = redSum.toDouble() / count,
                 green = greenSum.toDouble() / count,
                 blue = blueSum.toDouble() / count,
-                clippedFraction = clipped.toDouble() / count
+                clippedFraction = clipped.toDouble() / count,
+                fingerPixelFraction = fingerPixels.toDouble() / count
             )
             val quality = qualityGate.inspect(optics)
             if (!quality.usable) {
