@@ -7,7 +7,8 @@ data class FrameOptics(
     val red: Double,
     val green: Double,
     val blue: Double,
-    val clippedFraction: Double
+    val clippedFraction: Double,
+    val fingerPixelFraction: Double = 1.0
 ) {
     val luminance: Double get() = (red + green + blue) / 3.0
 }
@@ -23,7 +24,7 @@ class PpgFrameQuality {
 
     fun inspect(current: FrameOptics): FrameQuality {
         if (!current.red.isFinite() || !current.green.isFinite() ||
-            !current.blue.isFinite() || !current.clippedFraction.isFinite()
+            !current.blue.isFinite() || !current.clippedFraction.isFinite() || !current.fingerPixelFraction.isFinite()
         ) return reject("Invalid camera data", false)
 
         val brightness = current.luminance
@@ -35,8 +36,9 @@ class PpgFrameQuality {
 
         val finger = current.red >= MIN_RED &&
             current.red > current.green * RED_GREEN_RATIO &&
-            current.red > current.blue * RED_BLUE_RATIO
-        if (!finger) return reject("Cover the rear camera and flash with your fingertip", false)
+            current.red > current.blue * RED_BLUE_RATIO &&
+            current.fingerPixelFraction >= MIN_FINGER_PIXEL_FRACTION
+        if (!finger) return reject("Cover the camera evenly with your fingertip", false)
 
         val old = previous
         if (old != null) {
@@ -71,6 +73,7 @@ class PpgFrameQuality {
         const val RED_GREEN_RATIO = 1.04
         const val RED_BLUE_RATIO = 1.04
         const val MAX_CLIPPED_FRACTION = 0.30
+        const val MIN_FINGER_PIXEL_FRACTION = 0.65
         const val MAX_LUMINANCE_JUMP = 0.18
         const val MAX_CHANNEL_JUMP = 0.22
     }
