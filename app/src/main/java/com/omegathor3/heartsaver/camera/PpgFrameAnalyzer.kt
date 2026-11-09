@@ -61,7 +61,7 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             if (lastSampleNs != 0L) {
                 val elapsedMs = (timestamp - lastSampleNs) / 1_000_000L
                 if (elapsedMs > 120L) reset()
-                if (elapsedMs < 28L) return
+                if (elapsedMs < 32L) return
             }
             lastSampleNs = timestamp
             lastFingerPresent = true
