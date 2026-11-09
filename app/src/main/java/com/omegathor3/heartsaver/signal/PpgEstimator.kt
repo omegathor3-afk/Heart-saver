@@ -46,6 +46,7 @@ class PpgEstimator(
         val maxLag = (sampleRateHz * 60.0 / minBpm).toInt().coerceAtMost(detrended.size / 3)
         if (maxLag <= minLag) return null
 
+        val correlations = DoubleArray(maxLag + 1) { Double.NEGATIVE_INFINITY }
         var bestLag = -1
         var bestCorrelation = Double.NEGATIVE_INFINITY
         for (lag in minLag..maxLag) {
@@ -61,6 +62,7 @@ class PpgEstimator(
             }
             val denominator = sqrt(leftEnergy * rightEnergy)
             val correlation = if (denominator > 0.0) cross / denominator else 0.0
+            correlations[lag] = correlation
             if (correlation > bestCorrelation) {
                 bestCorrelation = correlation
                 bestLag = lag
@@ -68,7 +70,18 @@ class PpgEstimator(
         }
 
         if (bestLag <= 0 || bestCorrelation < 0.35) return null
-        val bpm = (60.0 * sampleRateHz / bestLag).toInt()
+        // Parabolic interpolation around the correlation peak reduces integer-lag quantization.
+        val fractionalOffset = if (bestLag > minLag && bestLag < maxLag) {
+            val left = correlations[bestLag - 1]
+            val center = correlations[bestLag]
+            val right = correlations[bestLag + 1]
+            val curvature = left - 2.0 * center + right
+            if (left.isFinite() && right.isFinite() && kotlin.math.abs(curvature) > 1e-9) {
+                (0.5 * (left - right) / curvature).coerceIn(-0.5, 0.5)
+            } else 0.0
+        } else 0.0
+        val refinedLag = bestLag + fractionalOffset
+        val bpm = (60.0 * sampleRateHz / refinedLag).toInt()
         if (bpm !in minBpm..maxBpm) return null
 
         return PulseEstimate(
