@@ -19,9 +19,12 @@ The phone illuminates a fingertip with its camera flash. Camera frames are proce
 - [x] Optical checks for fingertip color, low/high brightness and clipped highlights
 - [x] Reject abrupt frame-to-frame changes associated with movement or pressure shifts
 - [x] Clear buffered samples after invalid frames so stale readings are not reused
-- [ ] Stable multi-window BPM confirmation and pulse waveform display
+- [x] Multi-window median confirmation before displaying BPM
+- [x] Sub-sample autocorrelation peak refinement
+- [x] Local recent measurement history (timestamp, BPM, confidence only)
+- [x] Repeatable on-device validation checklist in docs/ON_DEVICE_VALIDATION.md
 - [ ] On-device validation against a reference pulse oximeter and ideally ECG
-- [ ] Measurement history and export
+- [ ] Measurement export
 
 ## Build
 
@@ -33,4 +36,4 @@ Run `gradle assembleDebug` with JDK 17 and Gradle 8.9, or use the Android CI wor
 
 ## Privacy
 
-Camera frames are processed in memory while a measurement is active. This implementation does not save or upload camera frames or health measurements.
+Camera frames are processed in memory while a measurement is active. Camera frames are never saved or uploaded. Completed BPM estimates, timestamps, and confidence values are stored locally on-device (up to 50 records); no health data is uploaded.
