@@ -16,7 +16,7 @@ class PpgEstimatorTest {
         }
         val result = estimator.estimate(samples)
         assertTrue(result != null)
-        assertEquals(72, result!!.bpm, 2)
+        assertTrue(kotlin.math.abs(result!!.bpm - 72) <= 2)
     }
 
     @Test fun rejectsSignalThatIsTooShort() {
