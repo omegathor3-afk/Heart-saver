@@ -20,6 +20,12 @@ class PpgFrameQualityTest {
         assertFalse(result.fingerDetected)
     }
 
+    @Test fun rejectsPartialFingertipCoverage() {
+        val result = PpgFrameQuality().inspect(FrameOptics(150.0, 95.0, 80.0, 0.01, 0.30))
+        assertFalse(result.usable)
+        assertFalse(result.fingerDetected)
+    }
+
     @Test fun rejectsDarkAndOverexposedFrames() {
         val gate = PpgFrameQuality()
         assertFalse(gate.inspect(FrameOptics(20.0, 15.0, 12.0, 0.0)).usable)
