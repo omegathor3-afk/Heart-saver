@@ -13,6 +13,8 @@ import kotlin.math.abs
  */
 class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAnalysis.Analyzer {
     private val samples = ArrayDeque<Double>()
+    private val recentBpm = ArrayDeque<Int>()
+    private val recentConfidence = ArrayDeque<Double>()
     private val sampleRateHz = 30.0
     private val samplePeriodNs = (1_000_000_000.0 / sampleRateHz).toLong()
     private val estimator = PpgEstimator(sampleRateHz = sampleRateHz)
@@ -117,15 +119,32 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 samplesSinceEstimate = 0
                 val estimate = estimator.estimate(samples.toList())
                 if (estimate != null && estimate.quality == SignalQuality.USABLE) {
-                    onUpdate(PpgFrameState(
-                        status = "Stable optical signal — keep still",
-                        bpm = estimate.bpm,
-                        confidence = estimate.confidence,
-                        progress = 1f,
-                        sampleCount = samples.size,
-                        waveform = normalizedWaveform()
-                    ))
+                    recentBpm.addLast(estimate.bpm)
+                    recentConfidence.addLast(estimate.confidence)
+                    while (recentBpm.size > CONFIRMATION_WINDOWS) recentBpm.removeFirst()
+                    while (recentConfidence.size > CONFIRMATION_WINDOWS) recentConfidence.removeFirst()
+                    if (recentBpm.size >= MIN_CONFIRMATION_WINDOWS) {
+                        val confirmedBpm = recentBpm.toList().sorted()[recentBpm.size / 2]
+                        val confirmedConfidence = recentConfidence.toList().sorted()[recentConfidence.size / 2]
+                        onUpdate(PpgFrameState(
+                            status = "Confirmed across multiple windows — keep still",
+                            bpm = confirmedBpm,
+                            confidence = confirmedConfidence,
+                            progress = 1f,
+                            sampleCount = samples.size,
+                            waveform = normalizedWaveform()
+                        ))
+                    } else {
+                        onUpdate(PpgFrameState(
+                            status = "Confirming pulse across another signal window…",
+                            progress = 1f,
+                            sampleCount = samples.size,
+                            waveform = normalizedWaveform()
+                        ))
+                    }
                 } else {
+                    recentBpm.clear()
+                    recentConfidence.clear()
                     onUpdate(PpgFrameState(
                         status = "Signal is weak or irregular — adjust gently and stay still",
                         progress = 1f,
@@ -158,6 +177,8 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
 
     private fun resetSampling() {
         samples.clear()
+        recentBpm.clear()
+        recentConfidence.clear()
         previousFrameNs = 0L
         previousRed = 0.0
         nextSampleNs = 0L
@@ -170,6 +191,8 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
         private const val REQUIRED_SAMPLES = 240
         private const val ESTIMATE_INTERVAL_SAMPLES = 30
         private const val WAVEFORM_SAMPLES = 90
+        private const val CONFIRMATION_WINDOWS = 5
+        private const val MIN_CONFIRMATION_WINDOWS = 2
     }
 }
 
