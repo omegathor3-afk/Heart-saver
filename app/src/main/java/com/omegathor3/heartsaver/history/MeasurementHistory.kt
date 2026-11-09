@@ -85,7 +85,7 @@ object MeasurementHistory {
             val bpm = fields[1].toIntOrNull() ?: return@mapNotNull null
             val confidence = fields[2].toDoubleOrNull() ?: return@mapNotNull null
             MeasurementRecord(timestamp, bpm, confidence).takeIf(::isValid)
-        }.sortedBy { it.timestampMillis }.takeLast(MAX_RECORDS)
+        }.sortedBy { it.timestampMillis }.toList().takeLast(MAX_RECORDS)
 
     private fun isValid(record: MeasurementRecord): Boolean =
         record.timestampMillis > 0L &&
