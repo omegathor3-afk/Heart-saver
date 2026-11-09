@@ -51,6 +51,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import java.util.concurrent.Executors
+import com.omegathor3.heartsaver.history.MeasurementHistory
+import com.omegathor3.heartsaver.history.MeasurementHistoryPanel
+import com.omegathor3.heartsaver.history.MeasurementRecord
 import java.util.concurrent.atomic.AtomicBoolean
 
 private val Night = Color(0xFF090D12)
@@ -69,6 +72,7 @@ fun CameraPpgScreen() {
     var measuring by remember { mutableStateOf(false) }
     var cameraError by remember { mutableStateOf<String?>(null) }
     var frameState by remember { mutableStateOf(PpgFrameState()) }
+    var history by remember { mutableStateOf(MeasurementHistory.load(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         hasPermission = it
         if (!it) cameraError = "Camera permission is required to measure a pulse."
@@ -77,6 +81,10 @@ fun CameraPpgScreen() {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
+                if (frameState.bpm != null) {
+                    MeasurementHistory.save(context, MeasurementRecord(System.currentTimeMillis(), frameState.bpm!!, frameState.confidence))
+                    history = MeasurementHistory.load(context)
+                }
                 measuring = false
                 frameState = PpgFrameState(status = "Measurement paused")
             }
@@ -154,11 +162,16 @@ fun CameraPpgScreen() {
                     }
                 }
                 Text(frameState.status, color = Muted, fontSize = 12.sp)
+                MeasurementHistoryPanel(history)
                 cameraError?.let { Text(it, color = Color(0xFFFFC46B), fontSize = 12.sp) }
                 Button(
                     onClick = {
                         if (!hasPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
                         else {
+                            if (measuring && frameState.bpm != null) {
+                                MeasurementHistory.save(context, MeasurementRecord(System.currentTimeMillis(), frameState.bpm!!, frameState.confidence))
+                                history = MeasurementHistory.load(context)
+                            }
                             measuring = !measuring
                             cameraError = null
                             frameState = if (measuring) PpgFrameState(status = "Starting camera…")
