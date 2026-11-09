@@ -51,6 +51,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val Night = Color(0xFF090D12)
 private val Panel = Color(0xFF151E28)
@@ -75,7 +76,10 @@ fun CameraPpgScreen() {
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) measuring = false
+            if (event == Lifecycle.Event.ON_STOP) {
+                measuring = false
+                frameState = PpgFrameState(status = "Measurement paused")
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -156,7 +160,9 @@ fun CameraPpgScreen() {
                         if (!hasPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
                         else {
                             measuring = !measuring
-                            if (!measuring) frameState = PpgFrameState(status = "Measurement stopped")
+                            cameraError = null
+                            frameState = if (measuring) PpgFrameState(status = "Starting camera…")
+                                else PpgFrameState(status = "Measurement stopped")
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(54.dp),
@@ -196,10 +202,15 @@ private fun CameraPreview(onState: (PpgFrameState) -> Unit, onError: (String) ->
     DisposableEffect(lifecycleOwner, previewView) {
         val providerFuture = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
-        val analyzer = PpgFrameAnalyzer { state -> previewView.post { onState(state) } }
+        val disposed = AtomicBoolean(false)
+        val analyzer = PpgFrameAnalyzer { state ->
+            if (!disposed.get()) previewView.post { if (!disposed.get()) onState(state) }
+        }
         providerFuture.addListener({
+            if (disposed.get()) return@addListener
             try {
                 provider = providerFuture.get()
+                if (disposed.get()) return@addListener
                 val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
                 val analysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -215,15 +226,22 @@ private fun CameraPreview(onState: (PpgFrameState) -> Unit, onError: (String) ->
                 val camera = provider?.bindToLifecycle(
                     lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis
                 )
-                if (camera == null) onError("Unable to open the rear camera.")
-                else if (camera.cameraInfo.hasFlashUnit()) camera.cameraControl.enableTorch(true)
-                else onError("No flash unit is available on this camera.")
+                if (camera == null) {
+                    provider?.unbindAll()
+                    onError("Unable to open the rear camera.")
+                } else if (camera.cameraInfo.hasFlashUnit()) {
+                    camera.cameraControl.enableTorch(true)
+                } else {
+                    provider?.unbindAll()
+                    onError("No flash unit is available on this camera.")
+                }
             } catch (error: Exception) {
-                onError("Camera could not start: ${error.localizedMessage ?: "unknown error"}")
+                if (!disposed.get()) onError("Camera could not start: ${error.localizedMessage ?: "unknown error"}")
             }
         }, ContextCompat.getMainExecutor(context))
 
         onDispose {
+            disposed.set(true)
             try { provider?.unbindAll() } catch (_: Exception) { }
             executor.shutdown()
         }
