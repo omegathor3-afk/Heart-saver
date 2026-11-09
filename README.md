@@ -21,10 +21,12 @@ The phone illuminates a fingertip with its camera flash. Camera frames are proce
 - [x] Clear buffered samples after invalid frames so stale readings are not reused
 - [x] Multi-window median confirmation before displaying BPM
 - [x] Sub-sample autocorrelation peak refinement
-- [x] Local recent measurement history (timestamp, BPM, confidence only)
-- [x] Repeatable on-device validation checklist in docs/ON_DEVICE_VALIDATION.md
+- [x] Relative-amplitude calibration and slow illumination-drift removal
+- [x] Local recent measurement history (timestamp, BPM, correlation confidence only)
+- [x] Chronological history summary, min/max/average, and BPM trend plot
+- [x] CSV export of local measurement records
+- [x] Expanded synthetic edge-case tests and physical-device trial protocol
 - [ ] On-device validation against a reference pulse oximeter and ideally ECG
-- [ ] Measurement export
 
 ## Build
 
@@ -32,8 +34,8 @@ Run `gradle assembleDebug` with JDK 17 and Gradle 8.9, or use the Android CI wor
 
 ## Important limitations
 
-**This is not a medical device, pulse oximeter, or ECG.** It estimates pulse rate only; it does not measure SpO2, electrical cardiac activity, or diagnose arrhythmias or other conditions. The image-based fingertip detector and signal pipeline remain experimental and have not yet been validated on a physical phone. Optical thresholds are heuristics; motion rejection is based on abrupt frame-level RGB changes and cannot detect every movement or pressure artifact. Results may be absent or inaccurate depending on camera hardware, flash, fingertip placement, movement, skin perfusion, pressure, and lighting.
+**This is not a medical device, pulse oximeter, or ECG.** It estimates pulse rate only; it does not measure SpO2, electrical cardiac activity, or diagnose arrhythmias or other conditions. The image-based fingertip detector and signal pipeline remain experimental and have not yet been validated on a physical phone. Optical thresholds are heuristics; motion rejection is based on abrupt frame-level RGB changes and cannot detect every movement or pressure artifact. The estimator's correlation confidence describes periodic similarity in the sampled signal, not clinical accuracy or confidence in a medical result. Results may be absent or inaccurate depending on camera hardware, flash, fingertip placement, movement, skin perfusion, pressure, and lighting.
 
 ## Privacy
 
-Camera frames are processed in memory while a measurement is active. Camera frames are never saved or uploaded. Completed BPM estimates, timestamps, and confidence values are stored locally on-device (up to 50 records); no health data is uploaded.
+Camera frames are processed in memory while a measurement is active. Camera frames are never saved or uploaded. Completed BPM estimates, timestamps, and correlation-confidence values are stored locally on-device (up to 50 records); CSV export is initiated by the user and contains only those values. No health data is uploaded.

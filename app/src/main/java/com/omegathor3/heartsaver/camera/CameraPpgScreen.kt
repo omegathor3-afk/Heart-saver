@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import java.io.IOException
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -73,6 +74,18 @@ fun CameraPpgScreen() {
     var cameraError by remember { mutableStateOf<String?>(null) }
     var frameState by remember { mutableStateOf(PpgFrameState()) }
     var history by remember { mutableStateOf(MeasurementHistory.load(context)) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                    it.write(MeasurementHistory.toCsv(history))
+                } ?: throw IOException("Unable to open the selected file.")
+                cameraError = "CSV export saved."
+            } catch (error: Exception) {
+                cameraError = "CSV export failed: ${error.localizedMessage ?: "unknown error"}"
+            }
+        }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         hasPermission = it
         if (!it) cameraError = "Camera permission is required to measure a pulse."
@@ -134,9 +147,9 @@ fun CameraPpgScreen() {
                         }
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                        Text("SIGNAL", color = Muted, fontSize = 10.sp, letterSpacing = 1.5.sp)
+                        Text("PERIODIC FIT", color = Muted, fontSize = 10.sp, letterSpacing = 1.2.sp)
                         Text(
-                            if (frameState.confidence >= 0.55) "Usable" else "Checking",
+                            if (frameState.confidence >= 0.55) "Higher" else "Building",
                             color = if (frameState.confidence >= 0.55) Mint else Color(0xFFFFC46B),
                             fontWeight = FontWeight.SemiBold
                         )
@@ -162,7 +175,9 @@ fun CameraPpgScreen() {
                     }
                 }
                 Text(frameState.status, color = Muted, fontSize = 12.sp)
-                MeasurementHistoryPanel(history)
+                MeasurementHistoryPanel(history) {
+                    exportLauncher.launch("heart-saver-history.csv")
+                }
                 cameraError?.let { Text(it, color = Color(0xFFFFC46B), fontSize = 12.sp) }
                 Button(
                     onClick = {
