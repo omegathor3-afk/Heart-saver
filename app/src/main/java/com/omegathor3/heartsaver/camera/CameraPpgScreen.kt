@@ -11,6 +11,7 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -125,6 +129,24 @@ fun CameraPpgScreen() {
                             fontWeight = FontWeight.SemiBold
                         )
                         Text("${(frameState.progress * 100).toInt()}%", color = Muted, fontSize = 12.sp)
+                    }
+                }
+                Canvas(
+                    modifier = Modifier.fillMaxWidth().height(72.dp)
+                        .background(Panel, RoundedCornerShape(14.dp)).padding(10.dp)
+                ) {
+                    val centerY = size.height / 2f
+                    drawLine(Color(0xFF344252), androidx.compose.ui.geometry.Offset(0f, centerY),
+                        androidx.compose.ui.geometry.Offset(size.width, centerY), strokeWidth = 1f)
+                    val points = frameState.waveform
+                    if (points.size > 1) {
+                        val path = Path()
+                        points.forEachIndexed { index, value ->
+                            val x = index.toFloat() / (points.size - 1) * size.width
+                            val y = centerY - value * size.height * 0.42f
+                            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        }
+                        drawPath(path, color = Mint, style = Stroke(width = 3f, cap = StrokeCap.Round))
                     }
                 }
                 Text(frameState.status, color = Muted, fontSize = 12.sp)
