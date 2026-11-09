@@ -5,12 +5,19 @@ import androidx.camera.core.ImageProxy
 import com.omegathor3.heartsaver.signal.PpgEstimator
 import java.util.ArrayDeque
 
-/** Extracts central-region red-channel samples from CameraX RGBA frames. Frames are never saved. */
+/**
+ * Extracts central-region red-channel samples and resamples them onto a fixed 30 Hz clock.
+ * Camera frames and samples are kept in memory only; no image data is saved.
+ */
 class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAnalysis.Analyzer {
     private val samples = ArrayDeque<Double>()
-    private val estimator = PpgEstimator(sampleRateHz = 30.0)
-    private var lastSampleNs = 0L
-    private var framesSinceEstimate = 0
+    private val sampleRateHz = 30.0
+    private val samplePeriodNs = (1_000_000_000.0 / sampleRateHz).toLong()
+    private val estimator = PpgEstimator(sampleRateHz = sampleRateHz)
+    private var previousFrameNs = 0L
+    private var previousRed = 0.0
+    private var nextSampleNs = 0L
+    private var samplesSinceEstimate = 0
     private var lastFingerPresent = false
 
     override fun analyze(image: ImageProxy) {
@@ -45,11 +52,11 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 }
             }
             if (count == 0) return
+
             val red = redSum.toDouble() / count
             val green = greenSum.toDouble() / count
             val blue = blueSum.toDouble() / count
             val fingerPresent = red > 65.0 && red > green * 1.06 && red > blue * 1.06
-
             if (!fingerPresent) {
                 if (lastFingerPresent) reset()
                 lastFingerPresent = false
@@ -58,16 +65,33 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             }
 
             val timestamp = image.imageInfo.timestamp
-            if (lastSampleNs != 0L) {
-                val elapsedMs = (timestamp - lastSampleNs) / 1_000_000L
-                if (elapsedMs > 120L) reset()
-                if (elapsedMs < 32L) return
+            if (previousFrameNs == 0L || timestamp <= previousFrameNs ||
+                timestamp - previousFrameNs > 120_000_000L
+            ) {
+                reset()
+                previousFrameNs = timestamp
+                previousRed = red
+                nextSampleNs = timestamp + samplePeriodNs
+                lastFingerPresent = true
+                onUpdate(PpgFrameState(status = "Keep still — collecting pulse signal"))
+                return
             }
-            lastSampleNs = timestamp
+
+            // Interpolate camera readings at exact 30 Hz timestamps so the estimator's
+            // sample-rate assumption does not depend on the phone's variable frame rate.
+            val intervalNs = timestamp - previousFrameNs
+            while (nextSampleNs <= timestamp) {
+                val fraction = ((nextSampleNs - previousFrameNs).toDouble() / intervalNs)
+                    .coerceIn(0.0, 1.0)
+                val interpolated = previousRed + (red - previousRed) * fraction
+                samples.addLast(interpolated)
+                while (samples.size > 450) samples.removeFirst()
+                samplesSinceEstimate++
+                nextSampleNs += samplePeriodNs
+            }
+            previousFrameNs = timestamp
+            previousRed = red
             lastFingerPresent = true
-            samples.addLast(red)
-            while (samples.size > 450) samples.removeFirst()
-            framesSinceEstimate++
 
             if (samples.size < 240) {
                 onUpdate(PpgFrameState(
@@ -78,10 +102,11 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 ))
                 return
             }
-            if (framesSinceEstimate >= 60) {
-                framesSinceEstimate = 0
+
+            if (samplesSinceEstimate >= 60) {
+                samplesSinceEstimate = 0
                 val estimate = estimator.estimate(samples.toList())
-                if (estimate != null && estimate.quality.name == "USABLE") {
+                if (estimate != null && estimate.quality == com.omegathor3.heartsaver.signal.SignalQuality.USABLE) {
                     onUpdate(PpgFrameState(
                         status = "Signal detected — hold still",
                         bpm = estimate.bpm,
@@ -117,8 +142,10 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
 
     private fun reset() {
         samples.clear()
-        lastSampleNs = 0L
-        framesSinceEstimate = 0
+        previousFrameNs = 0L
+        previousRed = 0.0
+        nextSampleNs = 0L
+        samplesSinceEstimate = 0
     }
 }
 
