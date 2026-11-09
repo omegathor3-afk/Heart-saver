@@ -21,7 +21,6 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
     private var previousRed = 0.0
     private var nextSampleNs = 0L
     private var samplesSinceEstimate = 0
-    private var lastFingerPresent = false
 
     override fun analyze(image: ImageProxy) {
         try {
@@ -75,7 +74,6 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             val quality = qualityGate.inspect(optics)
             if (!quality.usable) {
                 clearSignal()
-                lastFingerPresent = quality.fingerDetected
                 onUpdate(PpgFrameState(status = quality.status))
                 return
             }
@@ -88,7 +86,6 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 previousFrameNs = timestamp
                 previousRed = optics.red
                 nextSampleNs = timestamp + samplePeriodNs
-                lastFingerPresent = true
                 onUpdate(PpgFrameState(status = "Keep still — collecting pulse signal"))
                 return
             }
@@ -105,7 +102,6 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             }
             previousFrameNs = timestamp
             previousRed = optics.red
-            lastFingerPresent = true
 
             if (samples.size < REQUIRED_SAMPLES) {
                 onUpdate(PpgFrameState(
