@@ -35,6 +35,12 @@ class PpgFrameQualityTest {
         assertTrue(moved.status.contains("Movement"))
     }
 
+    @Test fun rejectsNonFiniteOpticalValues() {
+        val result = PpgFrameQuality().inspect(FrameOptics(Double.NaN, 90.0, 70.0, 0.0))
+        assertFalse(result.usable)
+        assertFalse(result.fingerDetected)
+    }
+
     @Test fun resetsBaselineAfterInvalidFrame() {
         val gate = PpgFrameQuality()
         gate.inspect(FrameOptics(150.0, 95.0, 80.0, 0.01))
