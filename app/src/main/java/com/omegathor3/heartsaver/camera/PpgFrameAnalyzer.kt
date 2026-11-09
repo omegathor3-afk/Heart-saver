@@ -3,17 +3,20 @@ package com.omegathor3.heartsaver.camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.omegathor3.heartsaver.signal.PpgEstimator
+import com.omegathor3.heartsaver.signal.SignalQuality
 import java.util.ArrayDeque
+import kotlin.math.abs
 
 /**
- * Extracts central-region red-channel samples and resamples them onto a fixed 30 Hz clock.
- * Camera frames and samples are kept in memory only; no image data is saved.
+ * Samples the central camera region in memory and resamples it to a 30 Hz timeline.
+ * Invalid optics, abrupt movement and loss of fingertip contact clear the active window.
  */
 class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAnalysis.Analyzer {
     private val samples = ArrayDeque<Double>()
     private val sampleRateHz = 30.0
     private val samplePeriodNs = (1_000_000_000.0 / sampleRateHz).toLong()
     private val estimator = PpgEstimator(sampleRateHz = sampleRateHz)
+    private val qualityGate = PpgFrameQuality()
     private var previousFrameNs = 0L
     private var previousRed = 0.0
     private var nextSampleNs = 0L
@@ -29,6 +32,7 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             val rowStride = plane.rowStride
             val pixelStride = plane.pixelStride
             if (pixelStride < 4 || width < 8 || height < 8) {
+                clearSignal()
                 onUpdate(PpgFrameState(status = "Camera format not supported"))
                 return
             }
@@ -40,75 +44,85 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             var redSum = 0L
             var greenSum = 0L
             var blueSum = 0L
+            var clipped = 0
             var count = 0
             for (y in top until bottom step 8) {
                 for (x in left until right step 8) {
                     val index = y * rowStride + x * pixelStride
-                    if (index + 2 >= buffer.limit()) continue
-                    redSum += buffer.get(index).toInt() and 0xff
-                    greenSum += buffer.get(index + 1).toInt() and 0xff
-                    blueSum += buffer.get(index + 2).toInt() and 0xff
+                    if (index < 0 || index + 2 >= buffer.limit()) continue
+                    val red = buffer.get(index).toInt() and 0xff
+                    val green = buffer.get(index + 1).toInt() and 0xff
+                    val blue = buffer.get(index + 2).toInt() and 0xff
+                    redSum += red
+                    greenSum += green
+                    blueSum += blue
+                    if (red >= 250 || green >= 250 || blue >= 250) clipped++
                     count++
                 }
             }
-            if (count == 0) return
+            if (count == 0) {
+                clearSignal()
+                onUpdate(PpgFrameState(status = "No camera pixels available"))
+                return
+            }
 
-            val red = redSum.toDouble() / count
-            val green = greenSum.toDouble() / count
-            val blue = blueSum.toDouble() / count
-            val fingerPresent = red > 65.0 && red > green * 1.06 && red > blue * 1.06
-            if (!fingerPresent) {
-                if (lastFingerPresent) reset()
-                lastFingerPresent = false
-                onUpdate(PpgFrameState(status = "Cover the rear camera and flash with your fingertip"))
+            val optics = FrameOptics(
+                red = redSum.toDouble() / count,
+                green = greenSum.toDouble() / count,
+                blue = blueSum.toDouble() / count,
+                clippedFraction = clipped.toDouble() / count
+            )
+            val quality = qualityGate.inspect(optics)
+            if (!quality.usable) {
+                clearSignal()
+                lastFingerPresent = quality.fingerDetected
+                onUpdate(PpgFrameState(status = quality.status))
                 return
             }
 
             val timestamp = image.imageInfo.timestamp
             if (previousFrameNs == 0L || timestamp <= previousFrameNs ||
-                timestamp - previousFrameNs > 120_000_000L
+                timestamp - previousFrameNs > MAX_FRAME_GAP_NS
             ) {
-                reset()
+                resetSampling()
                 previousFrameNs = timestamp
-                previousRed = red
+                previousRed = optics.red
                 nextSampleNs = timestamp + samplePeriodNs
                 lastFingerPresent = true
                 onUpdate(PpgFrameState(status = "Keep still — collecting pulse signal"))
                 return
             }
 
-            // Interpolate camera readings at exact 30 Hz timestamps so the estimator's
-            // sample-rate assumption does not depend on the phone's variable frame rate.
             val intervalNs = timestamp - previousFrameNs
             while (nextSampleNs <= timestamp) {
                 val fraction = ((nextSampleNs - previousFrameNs).toDouble() / intervalNs)
                     .coerceIn(0.0, 1.0)
-                val interpolated = previousRed + (red - previousRed) * fraction
+                val interpolated = previousRed + (optics.red - previousRed) * fraction
                 samples.addLast(interpolated)
-                while (samples.size > 450) samples.removeFirst()
+                while (samples.size > MAX_SAMPLES) samples.removeFirst()
                 samplesSinceEstimate++
                 nextSampleNs += samplePeriodNs
             }
             previousFrameNs = timestamp
-            previousRed = red
+            previousRed = optics.red
             lastFingerPresent = true
 
-            if (samples.size < 240) {
+            if (samples.size < REQUIRED_SAMPLES) {
                 onUpdate(PpgFrameState(
                     status = "Keep still — collecting pulse signal",
-                    progress = (samples.size.toFloat() / 240).coerceIn(0f, 1f),
+                    progress = (samples.size.toFloat() / REQUIRED_SAMPLES).coerceIn(0f, 1f),
                     sampleCount = samples.size,
                     waveform = normalizedWaveform()
                 ))
                 return
             }
 
-            if (samplesSinceEstimate >= 60) {
+            if (samplesSinceEstimate >= ESTIMATE_INTERVAL_SAMPLES) {
                 samplesSinceEstimate = 0
                 val estimate = estimator.estimate(samples.toList())
-                if (estimate != null && estimate.quality == com.omegathor3.heartsaver.signal.SignalQuality.USABLE) {
+                if (estimate != null && estimate.quality == SignalQuality.USABLE) {
                     onUpdate(PpgFrameState(
-                        status = "Signal detected — hold still",
+                        status = "Stable optical signal — keep still",
                         bpm = estimate.bpm,
                         confidence = estimate.confidence,
                         progress = 1f,
@@ -117,7 +131,7 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                     ))
                 } else {
                     onUpdate(PpgFrameState(
-                        status = "Signal is unstable — adjust fingertip pressure and stay still",
+                        status = "Signal is weak or irregular — adjust gently and stay still",
                         progress = 1f,
                         sampleCount = samples.size,
                         waveform = normalizedWaveform()
@@ -125,6 +139,7 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 }
             }
         } catch (_: IllegalStateException) {
+            clearSignal()
             onUpdate(PpgFrameState(status = "Camera frame unavailable — retrying"))
         } finally {
             image.close()
@@ -132,20 +147,33 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
     }
 
     private fun normalizedWaveform(): List<Float> {
-        val values = samples.toList().takeLast(90)
+        val values = samples.toList().takeLast(WAVEFORM_SAMPLES)
         if (values.isEmpty()) return emptyList()
         val mean = values.average()
         val centered = values.map { it - mean }
-        val scale = centered.maxOf { kotlin.math.abs(it) }.coerceAtLeast(0.01)
+        val scale = centered.maxOf { abs(it) }.coerceAtLeast(0.01)
         return centered.map { (it / scale).toFloat().coerceIn(-1f, 1f) }
     }
 
-    private fun reset() {
+    private fun clearSignal() {
+        resetSampling()
+        qualityGate.reset()
+    }
+
+    private fun resetSampling() {
         samples.clear()
         previousFrameNs = 0L
         previousRed = 0.0
         nextSampleNs = 0L
         samplesSinceEstimate = 0
+    }
+
+    companion object {
+        private const val MAX_FRAME_GAP_NS = 120_000_000L
+        private const val MAX_SAMPLES = 450
+        private const val REQUIRED_SAMPLES = 240
+        private const val ESTIMATE_INTERVAL_SAMPLES = 30
+        private const val WAVEFORM_SAMPLES = 90
     }
 }
 
