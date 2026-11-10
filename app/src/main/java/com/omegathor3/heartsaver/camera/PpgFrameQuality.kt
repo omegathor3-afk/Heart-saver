@@ -125,7 +125,7 @@ internal data class PpgRgbaPlaneLayout(
     val bufferLimit: Int
 ) {
     fun isValid(): Boolean {
-        if (width < 8 || height < 8 || pixelStride != BYTES_PER_PIXEL ||
+        if (width < 8 || height < 8 || pixelStride.toLong() != BYTES_PER_PIXEL ||
             rowStride <= 0 || bufferLimit < 0
         ) return false
 
