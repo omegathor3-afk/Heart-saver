@@ -86,7 +86,10 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             )
             val quality = qualityGate.inspect(optics)
             if (!quality.usable) {
-                clearSignal()
+                // Preserve PpgFrameQuality's movement-recovery counter. Calling
+                // clearSignal() here would reset that counter after the first
+                // movement frame and allow the very next frame back into sampling.
+                resetSampling()
                 onUpdate(PpgFrameState(status = quality.status))
                 return
             }
