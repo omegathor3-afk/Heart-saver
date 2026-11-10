@@ -71,4 +71,28 @@ class PpgFrameQualityTest {
         assertFalse(gate.inspect(stable(20.0, 15.0, 12.0)).usable)
         assertTrue(gate.inspect(stable(205.0, 130.0, 110.0)).usable)
     }
+    @Test
+    fun validatesCompleteRgbaPlaneBeforeSampling() {
+        assertTrue(PpgRgbaPlaneLayout(
+            width = 64, height = 48, rowStride = 256, pixelStride = 4, bufferLimit = 12288
+        ).isValid())
+
+        assertFalse(PpgRgbaPlaneLayout(
+            width = 64, height = 48, rowStride = 255, pixelStride = 4, bufferLimit = 12288
+        ).isValid())
+        assertFalse(PpgRgbaPlaneLayout(
+            width = 64, height = 48, rowStride = 256, pixelStride = 4, bufferLimit = 12287
+        ).isValid())
+        assertFalse(PpgRgbaPlaneLayout(
+            width = 64, height = 48, rowStride = 512, pixelStride = 8, bufferLimit = 24576
+        ).isValid())
+        assertFalse(PpgRgbaPlaneLayout(
+            width = 7, height = 48, rowStride = 28, pixelStride = 4, bufferLimit = 1344
+        ).isValid())
+        assertFalse(PpgRgbaPlaneLayout(
+            width = Int.MAX_VALUE, height = Int.MAX_VALUE,
+            rowStride = Int.MAX_VALUE, pixelStride = 4, bufferLimit = Int.MAX_VALUE
+        ).isValid())
+    }
+
 }
