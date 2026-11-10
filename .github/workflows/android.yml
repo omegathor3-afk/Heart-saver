@@ -29,6 +29,20 @@ jobs:
           gradle-version: "8.9"
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
+      - name: Verify APK archive, signature and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          unzip -t "$apk"
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk_root"
+          apksigner="$(find "$sdk_root/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          test -n "$apksigner"
+          "$apksigner" verify --verbose --print-certs "$apk"
+          echo "APK size: $(stat -c '%s' "$apk") bytes"
+          sha256sum "$apk"
       - name: Run unit tests
         run: gradle --no-daemon --stacktrace testDebugUnitTest
       - uses: actions/upload-artifact@v4
