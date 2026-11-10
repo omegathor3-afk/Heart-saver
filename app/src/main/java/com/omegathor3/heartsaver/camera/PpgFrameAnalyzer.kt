@@ -26,7 +26,12 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
 
     override fun analyze(image: ImageProxy) {
         try {
-            val plane = image.planes.firstOrNull() ?: return
+            val plane = image.planes.firstOrNull()
+            if (plane == null) {
+                clearSignal()
+                onUpdate(PpgFrameState(status = "Camera frame has no pixel plane — retrying"))
+                return
+            }
             val buffer = plane.buffer
             val width = image.width
             val height = image.height
