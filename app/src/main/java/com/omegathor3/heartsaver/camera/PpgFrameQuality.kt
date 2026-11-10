@@ -110,3 +110,33 @@ class PpgFrameQuality {
         private const val RECOVERY_FRAMES = 2
     }
 }
+
+
+/**
+ * Structural validation for the single RGBA_8888 plane consumed by the camera analyzer.
+ * Validate the complete image extent before indexing any pixel so malformed strides
+ * cannot silently turn a partial frame into a plausible optical-quality sample.
+ */
+internal data class PpgRgbaPlaneLayout(
+    val width: Int,
+    val height: Int,
+    val rowStride: Int,
+    val pixelStride: Int,
+    val bufferLimit: Int
+) {
+    fun isValid(): Boolean {
+        if (width < 8 || height < 8 || pixelStride != BYTES_PER_PIXEL ||
+            rowStride <= 0 || bufferLimit < 0
+        ) return false
+
+        val minimumRowBytes = width.toLong() * BYTES_PER_PIXEL
+        if (rowStride.toLong() < minimumRowBytes) return false
+
+        val requiredBytes = (height.toLong() - 1L) * rowStride.toLong() + minimumRowBytes
+        return requiredBytes <= bufferLimit.toLong()
+    }
+
+    private companion object {
+        const val BYTES_PER_PIXEL = 4L
+    }
+}
