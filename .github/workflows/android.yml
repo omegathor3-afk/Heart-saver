@@ -45,6 +45,16 @@ jobs:
           sha256sum "$apk"
       - name: Run unit tests
         run: gradle --no-daemon --stacktrace testDebugUnitTest
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: heart-saver-unit-test-reports
+          path: |
+            app/build/test-results/testDebugUnitTest/*.xml
+            app/reports/tests/testDebugUnitTest/**
+          if-no-files-found: warn
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         if: success()
         with:
