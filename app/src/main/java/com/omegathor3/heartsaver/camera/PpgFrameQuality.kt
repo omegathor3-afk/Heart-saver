@@ -24,9 +24,10 @@ class PpgFrameQuality {
     private var recoveryFramesRemaining = 0
 
     fun inspect(current: FrameOptics): FrameQuality {
-        val channels = listOf(current.red, current.green, current.blue)
         if (
-            channels.any { !it.isFinite() || it !in MIN_CHANNEL..MAX_CHANNEL } ||
+            !current.red.isFinite() || current.red !in MIN_CHANNEL..MAX_CHANNEL ||
+            !current.green.isFinite() || current.green !in MIN_CHANNEL..MAX_CHANNEL ||
+            !current.blue.isFinite() || current.blue !in MIN_CHANNEL..MAX_CHANNEL ||
             !current.clippedFraction.isFinite() ||
             !current.fingerPixelFraction.isFinite() ||
             current.clippedFraction !in 0.0..1.0 ||
