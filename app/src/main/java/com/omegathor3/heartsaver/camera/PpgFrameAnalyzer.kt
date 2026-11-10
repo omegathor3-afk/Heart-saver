@@ -1,5 +1,6 @@
 package com.omegathor3.heartsaver.camera
 
+import android.graphics.PixelFormat
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.omegathor3.heartsaver.signal.PpgEstimator
@@ -26,10 +27,10 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
 
     override fun analyze(image: ImageProxy) {
         try {
-            val plane = image.planes.firstOrNull()
-            if (plane == null) {
+            val plane = image.planes.singleOrNull()
+            if (image.format != PixelFormat.RGBA_8888 || plane == null) {
                 clearSignal()
-                onUpdate(PpgFrameState(status = "Camera frame has no pixel plane — retrying"))
+                onUpdate(PpgFrameState(status = "Camera format not supported — retrying"))
                 return
             }
             val buffer = plane.buffer
@@ -37,9 +38,16 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             val height = image.height
             val rowStride = plane.rowStride
             val pixelStride = plane.pixelStride
-            if (pixelStride < 4 || width < 8 || height < 8) {
+            val layout = PpgRgbaPlaneLayout(
+                width = width,
+                height = height,
+                rowStride = rowStride,
+                pixelStride = pixelStride,
+                bufferLimit = buffer.limit()
+            )
+            if (!layout.isValid()) {
                 clearSignal()
-                onUpdate(PpgFrameState(status = "Camera format not supported"))
+                onUpdate(PpgFrameState(status = "Camera frame layout not supported — retrying"))
                 return
             }
 
