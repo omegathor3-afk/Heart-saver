@@ -50,6 +50,17 @@ class PpgEstimatorTest {
         assertTrue(abs(result!!.bpm - 66) <= 2)
     }
 
+    @Test fun prefersTheFirstReliablePeakOverA_StrongerHalfRateHarmonic() {
+        listOf(84.0, 170.0, 175.0, 180.0).forEach { expected ->
+            val result = estimator.estimate(pulse(expected))
+            assertTrue("No estimate for synthetic $expected BPM signal", result != null)
+            assertTrue(
+                "Expected approximately $expected BPM, received ${result!!.bpm}",
+                abs(result!!.bpm - expected.toInt()) <= 2
+            )
+        }
+    }
+
     @Test fun rejectsShortFlatAndNonFiniteSignals() {
         assertNull(estimator.estimate(List(100) { 100.0 }))
         assertNull(estimator.estimate(List(600) { 100.0 }))
