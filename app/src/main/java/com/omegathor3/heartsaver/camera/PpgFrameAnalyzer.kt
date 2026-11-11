@@ -43,7 +43,8 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 height = height,
                 rowStride = rowStride,
                 pixelStride = pixelStride,
-                bufferLimit = buffer.limit()
+                bufferLimit = buffer.limit(),
+                bufferPosition = buffer.position()
             )
             if (!layout.isValid()) {
                 clearSignal()
@@ -63,7 +64,7 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
             var count = 0
             for (y in top until bottom step 8) {
                 for (x in left until right step 8) {
-                    val index = y * rowStride + x * pixelStride
+                    val index = layout.bufferPosition + y * rowStride + x * pixelStride
                     if (index < 0 || index + 2 >= buffer.limit()) continue
                     val red = buffer.get(index).toInt() and 0xff
                     val green = buffer.get(index + 1).toInt() and 0xff
