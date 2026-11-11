@@ -111,4 +111,32 @@ class PpgFrameQualityTest {
         ).isValid())
     }
 
+    @Test
+    fun acceptsPaddedRowsOnlyWhenTheCompleteLastRowFits() {
+        val width = 64
+        val height = 48
+        val rowStride = 272 // 16 bytes of row padding beyond RGBA pixels.
+        val pixelBytes = width * 4
+        val position = 16
+        val requiredLimit = position + (height - 1) * rowStride + pixelBytes
+
+        assertTrue(PpgRgbaPlaneLayout(
+            width = width,
+            height = height,
+            rowStride = rowStride,
+            pixelStride = 4,
+            bufferLimit = requiredLimit,
+            bufferPosition = position
+        ).isValid())
+
+        assertFalse(PpgRgbaPlaneLayout(
+            width = width,
+            height = height,
+            rowStride = rowStride,
+            pixelStride = 4,
+            bufferLimit = requiredLimit - 1,
+            bufferPosition = position
+        ).isValid())
+    }
+
 }
