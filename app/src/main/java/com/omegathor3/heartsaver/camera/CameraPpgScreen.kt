@@ -230,6 +230,7 @@ private fun CameraPreview(onState: (PpgFrameState) -> Unit, onError: (String) ->
     DisposableEffect(lifecycleOwner, previewView) {
         val providerFuture = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
+        var analysis: ImageAnalysis? = null
         val disposed = AtomicBoolean(false)
         val analyzer = PpgFrameAnalyzer { state ->
             if (!disposed.get()) previewView.post { if (!disposed.get()) onState(state) }
@@ -240,7 +241,7 @@ private fun CameraPreview(onState: (PpgFrameState) -> Unit, onError: (String) ->
                 provider = providerFuture.get()
                 if (disposed.get()) return@addListener
                 val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-                val analysis = ImageAnalysis.Builder()
+                val frameAnalysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                     .setResolutionSelector(
@@ -249,27 +250,52 @@ private fun CameraPreview(onState: (PpgFrameState) -> Unit, onError: (String) ->
                             .build()
                     )
                     .build()
-                    .also { it.setAnalyzer(executor, analyzer) }
+                analysis = frameAnalysis
+                frameAnalysis.setAnalyzer(executor, analyzer)
                 provider?.unbindAll()
                 val camera = provider?.bindToLifecycle(
-                    lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis
+                    lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, frameAnalysis
                 )
+                // ON_STOP or recomposition can dispose this effect while the
+                // provider future is completing. Recheck after binding so a late
+                // listener cannot leave a camera session alive after disposal.
+                if (disposed.get()) {
+                    frameAnalysis.clearAnalyzer()
+                    provider?.unbindAll()
+                    return@addListener
+                }
                 if (camera == null) {
+                    frameAnalysis.clearAnalyzer()
                     provider?.unbindAll()
                     onError("Unable to open the rear camera.")
                 } else if (camera.cameraInfo.hasFlashUnit()) {
-                    camera.cameraControl.enableTorch(true)
+                    val torchFuture = camera.cameraControl.enableTorch(true)
+                    torchFuture.addListener({
+                        try {
+                            torchFuture.get()
+                        } catch (error: Exception) {
+                            frameAnalysis.clearAnalyzer()
+                            provider?.unbindAll()
+                            if (!disposed.get()) {
+                                onError("Camera flash could not start: ${error.localizedMessage ?: "unknown error"}")
+                            }
+                        }
+                    }, ContextCompat.getMainExecutor(context))
                 } else {
+                    frameAnalysis.clearAnalyzer()
                     provider?.unbindAll()
                     onError("No flash unit is available on this camera.")
                 }
             } catch (error: Exception) {
+                analysis?.clearAnalyzer()
+                try { provider?.unbindAll() } catch (_: Exception) { }
                 if (!disposed.get()) onError("Camera could not start: ${error.localizedMessage ?: "unknown error"}")
             }
         }, ContextCompat.getMainExecutor(context))
 
         onDispose {
             disposed.set(true)
+            analysis?.clearAnalyzer()
             try { provider?.unbindAll() } catch (_: Exception) { }
             executor.shutdown()
         }
