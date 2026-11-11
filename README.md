@@ -11,6 +11,7 @@ The phone illuminates a fingertip with its camera flash. Camera frames are proce
 - [x] Native Android/Kotlin + Jetpack Compose project
 - [x] CameraX rear-camera preview and torch activation
 - [x] Live frame analysis of a central image region
+- [x] Analysis resolution is bounded near 640×480 to limit per-frame memory and CPU work on high-resolution cameras
 - [x] Basic fingertip-presence heuristic and signal collection
 - [x] Autocorrelation-based experimental BPM estimate
 - [x] GitHub Actions debug APK build and unit-test workflow
