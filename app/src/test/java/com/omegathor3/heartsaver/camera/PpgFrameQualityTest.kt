@@ -95,4 +95,20 @@ class PpgFrameQualityTest {
         ).isValid())
     }
 
+    @Test
+    fun validatesPlaneStartingAtNonZeroBufferPosition() {
+        assertTrue(PpgRgbaPlaneLayout(
+            width = 64, height = 48, rowStride = 256, pixelStride = 4,
+            bufferLimit = 12304, bufferPosition = 16
+        ).isValid())
+        assertFalse(PpgRgbaPlaneLayout(
+            width = 64, height = 48, rowStride = 256, pixelStride = 4,
+            bufferLimit = 12303, bufferPosition = 16
+        ).isValid())
+        assertFalse(PpgRgbaPlaneLayout(
+            width = 64, height = 48, rowStride = 256, pixelStride = 4,
+            bufferLimit = 12304, bufferPosition = 12305
+        ).isValid())
+    }
+
 }
