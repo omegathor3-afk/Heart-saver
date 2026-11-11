@@ -122,17 +122,18 @@ internal data class PpgRgbaPlaneLayout(
     val height: Int,
     val rowStride: Int,
     val pixelStride: Int,
-    val bufferLimit: Int
+    val bufferLimit: Int,
+    val bufferPosition: Int = 0
 ) {
     fun isValid(): Boolean {
         if (width < 8 || height < 8 || pixelStride.toLong() != BYTES_PER_PIXEL ||
-            rowStride <= 0 || bufferLimit < 0
+            rowStride <= 0 || bufferPosition < 0 || bufferLimit < bufferPosition
         ) return false
 
         val minimumRowBytes = width.toLong() * BYTES_PER_PIXEL
         if (rowStride.toLong() < minimumRowBytes) return false
 
-        val requiredBytes = (height.toLong() - 1L) * rowStride.toLong() + minimumRowBytes
+        val requiredBytes = bufferPosition.toLong() + (height.toLong() - 1L) * rowStride.toLong() + minimumRowBytes
         return requiredBytes <= bufferLimit.toLong()
     }
 
