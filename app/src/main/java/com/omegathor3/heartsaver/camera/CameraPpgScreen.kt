@@ -1,6 +1,7 @@
 package com.omegathor3.heartsaver.camera
 
 import android.Manifest
+import android.util.Size
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -246,7 +247,15 @@ private fun CameraPreview(onState: (PpgFrameState) -> Unit, onError: (String) ->
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                     .setResolutionSelector(
                         ResolutionSelector.Builder()
-                            .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+                            // Bound analysis work on high-resolution phone cameras.
+                            // 640x480 is sufficient for the sampled fingertip ROI and
+                            // avoids allocating full-resolution 4K/8K analysis buffers.
+                            .setResolutionStrategy(
+                                ResolutionStrategy(
+                                    Size(640, 480),
+                                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
+                                )
+                            )
                             .build()
                     )
                     .build()
