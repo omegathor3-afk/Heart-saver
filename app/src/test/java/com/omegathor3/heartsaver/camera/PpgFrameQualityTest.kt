@@ -139,4 +139,46 @@ class PpgFrameQualityTest {
         ).isValid())
     }
 
+
+    @Test
+    fun resamplesJitteredCameraFramesOnAFixedThirtyHertzTimeline() {
+        val resampler = PpgTimestampResampler(sampleRateHz = 30.0)
+        assertTrue(resampler.push(0L, 100.0).reset)
+        assertTrue(resampler.push(20_000_000L, 106.0).samples.isEmpty())
+
+        val result = resampler.push(75_000_000L, 117.0)
+        assertFalse(result.reset)
+        assertEquals(2, result.samples.size)
+        assertEquals(108.6666666667, result.samples[0], 0.000001)
+        assertEquals(115.3333333333, result.samples[1], 0.000001)
+    }
+
+    @Test
+    fun longGapsAndNonMonotonicTimestampsStartFreshWindows() {
+        val resampler = PpgTimestampResampler(sampleRateHz = 30.0)
+        assertTrue(resampler.push(0L, 100.0).reset)
+        assertTrue(resampler.push(121_000_000L, 110.0).reset)
+
+        val afterGap = resampler.push(154_333_333L, 120.0)
+        assertFalse(afterGap.reset)
+        assertEquals(listOf(120.0), afterGap.samples)
+
+        assertTrue(resampler.push(150_000_000L, 130.0).reset)
+        val afterClockReset = resampler.push(183_333_333L, 140.0)
+        assertFalse(afterClockReset.reset)
+        assertEquals(listOf(140.0), afterClockReset.samples)
+    }
+
+    @Test
+    fun invalidSamplesResetTheTimelineAndZeroIsAValidFirstTimestamp() {
+        val resampler = PpgTimestampResampler(sampleRateHz = 30.0)
+        assertTrue(resampler.push(0L, 100.0).reset)
+        assertTrue(resampler.push(33_333_333L, Double.NaN).reset)
+        assertTrue(resampler.push(66_666_666L, 110.0).reset)
+        val next = resampler.push(99_999_999L, 120.0)
+        assertFalse(next.reset)
+        assertEquals(listOf(120.0), next.samples)
+    }
+
+
 }
