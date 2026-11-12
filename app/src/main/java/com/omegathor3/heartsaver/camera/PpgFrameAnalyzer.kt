@@ -17,12 +17,9 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
     private val recentBpm = ArrayDeque<Int>()
     private val recentConfidence = ArrayDeque<Double>()
     private val sampleRateHz = 30.0
-    private val samplePeriodNs = (1_000_000_000.0 / sampleRateHz).toLong()
     private val estimator = PpgEstimator(sampleRateHz = sampleRateHz)
     private val qualityGate = PpgFrameQuality()
-    private var previousFrameNs = 0L
-    private var previousRed = 0.0
-    private var nextSampleNs = 0L
+    private val resampler = PpgTimestampResampler(sampleRateHz, MAX_FRAME_GAP_NS)
     private var samplesSinceEstimate = 0
 
     override fun analyze(image: ImageProxy) {
@@ -103,30 +100,19 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
                 return
             }
 
-            val timestamp = image.imageInfo.timestamp
-            if (previousFrameNs == 0L || timestamp <= previousFrameNs ||
-                timestamp - previousFrameNs > MAX_FRAME_GAP_NS
-            ) {
-                resetSampling()
-                previousFrameNs = timestamp
-                previousRed = optics.red
-                nextSampleNs = timestamp + samplePeriodNs
+            val resampled = resampler.push(image.imageInfo.timestamp, optics.red)
+            if (resampled.reset) {
+                // A first frame, timestamp discontinuity, or long camera stall
+                // starts a fresh signal window without discarding the new baseline.
+                resetAccumulatedSignal()
                 onUpdate(PpgFrameState(status = "Keep still — collecting pulse signal"))
                 return
             }
-
-            val intervalNs = timestamp - previousFrameNs
-            while (nextSampleNs <= timestamp) {
-                val fraction = ((nextSampleNs - previousFrameNs).toDouble() / intervalNs)
-                    .coerceIn(0.0, 1.0)
-                val interpolated = previousRed + (optics.red - previousRed) * fraction
-                samples.addLast(interpolated)
+            resampled.samples.forEach { sample ->
+                samples.addLast(sample)
                 while (samples.size > MAX_SAMPLES) samples.removeFirst()
                 samplesSinceEstimate++
-                nextSampleNs += samplePeriodNs
             }
-            previousFrameNs = timestamp
-            previousRed = optics.red
 
             if (samples.size < REQUIRED_SAMPLES) {
                 onUpdate(PpgFrameState(
@@ -198,14 +184,16 @@ class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAna
         qualityGate.reset()
     }
 
-    private fun resetSampling() {
+    private fun resetAccumulatedSignal() {
         samples.clear()
         recentBpm.clear()
         recentConfidence.clear()
-        previousFrameNs = 0L
-        previousRed = 0.0
-        nextSampleNs = 0L
         samplesSinceEstimate = 0
+    }
+
+    private fun resetSampling() {
+        resetAccumulatedSignal()
+        resampler.reset()
     }
 
     companion object {
@@ -227,3 +215,77 @@ data class PpgFrameState(
     val sampleCount: Int = 0,
     val waveform: List<Float> = emptyList()
 )
+
+
+/** Timestamp-driven interpolation onto a fixed-rate timeline independent of camera jitter. */
+internal data class PpgResampleResult(
+    val samples: List<Double>,
+    val reset: Boolean
+)
+
+internal class PpgTimestampResampler(
+    sampleRateHz: Double = 30.0,
+    private val maxFrameGapNs: Long = 120_000_000L
+) {
+    private val samplePeriodNs: Long
+    private var previousTimestampNs: Long? = null
+    private var previousValue: Double? = null
+    private var nextSampleTimestampNs: Long? = null
+
+    init {
+        require(sampleRateHz.isFinite() && sampleRateHz in 10.0..120.0)
+        require(maxFrameGapNs > 0L)
+        samplePeriodNs = (1_000_000_000.0 / sampleRateHz).toLong().coerceAtLeast(1L)
+    }
+
+    fun push(timestampNs: Long, value: Double): PpgResampleResult {
+        if (timestampNs < 0L || !value.isFinite()) {
+            reset()
+            return PpgResampleResult(emptyList(), reset = true)
+        }
+
+        val previousTime = previousTimestampNs
+        val previousSample = previousValue
+        val nextTime = nextSampleTimestampNs
+        if (previousTime == null || previousSample == null || nextTime == null ||
+            timestampNs <= previousTime || timestampNs - previousTime > maxFrameGapNs
+        ) {
+            startAt(timestampNs, value)
+            return PpgResampleResult(emptyList(), reset = true)
+        }
+
+        val interval = timestampNs - previousTime
+        val output = ArrayList<Double>(4)
+        var next = nextTime
+        while (next <= timestampNs) {
+            val fraction = ((next - previousTime).toDouble() / interval).coerceIn(0.0, 1.0)
+            output += previousSample + (value - previousSample) * fraction
+            if (next > Long.MAX_VALUE - samplePeriodNs) {
+                reset()
+                return PpgResampleResult(output, reset = true)
+            }
+            next += samplePeriodNs
+        }
+
+        previousTimestampNs = timestampNs
+        previousValue = value
+        nextSampleTimestampNs = next
+        return PpgResampleResult(output, reset = false)
+    }
+
+    fun reset() {
+        previousTimestampNs = null
+        previousValue = null
+        nextSampleTimestampNs = null
+    }
+
+    private fun startAt(timestampNs: Long, value: Double) {
+        previousTimestampNs = timestampNs
+        previousValue = value
+        nextSampleTimestampNs = if (timestampNs <= Long.MAX_VALUE - samplePeriodNs) {
+            timestampNs + samplePeriodNs
+        } else {
+            null
+        }
+    }
+}
