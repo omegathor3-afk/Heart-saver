@@ -1,0 +1,291 @@
+package com.omegathor3.heartsaver.camera
+
+import android.graphics.PixelFormat
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import com.omegathor3.heartsaver.signal.PpgEstimator
+import com.omegathor3.heartsaver.signal.SignalQuality
+import java.util.ArrayDeque
+import kotlin.math.abs
+
+/**
+ * Samples the central camera region in memory and resamples it to a 30 Hz timeline.
+ * Invalid optics, abrupt movement and loss of fingertip contact clear the active window.
+ */
+class PpgFrameAnalyzer(private val onUpdate: (PpgFrameState) -> Unit) : ImageAnalysis.Analyzer {
+    private val samples = ArrayDeque<Double>()
+    private val recentBpm = ArrayDeque<Int>()
+    private val recentConfidence = ArrayDeque<Double>()
+    private val sampleRateHz = 30.0
+    private val estimator = PpgEstimator(sampleRateHz = sampleRateHz)
+    private val qualityGate = PpgFrameQuality()
+    private val resampler = PpgTimestampResampler(sampleRateHz, MAX_FRAME_GAP_NS)
+    private var samplesSinceEstimate = 0
+
+    override fun analyze(image: ImageProxy) {
+        try {
+            val plane = image.planes.singleOrNull()
+            if (image.format != PixelFormat.RGBA_8888 || plane == null) {
+                clearSignal()
+                onUpdate(PpgFrameState(status = "Camera format not supported — retrying"))
+                return
+            }
+            val buffer = plane.buffer
+            val width = image.width
+            val height = image.height
+            val rowStride = plane.rowStride
+            val pixelStride = plane.pixelStride
+            val layout = PpgRgbaPlaneLayout(
+                width = width,
+                height = height,
+                rowStride = rowStride,
+                pixelStride = pixelStride,
+                bufferLimit = buffer.limit(),
+                bufferPosition = buffer.position()
+            )
+            if (!layout.isValid()) {
+                clearSignal()
+                onUpdate(PpgFrameState(status = "Camera frame layout not supported — retrying"))
+                return
+            }
+
+            val left = width / 4
+            val right = width * 3 / 4
+            val top = height / 4
+            val bottom = height * 3 / 4
+            var redSum = 0L
+            var greenSum = 0L
+            var blueSum = 0L
+            var clipped = 0
+            var fingerPixels = 0
+            var count = 0
+            for (y in top until bottom step 8) {
+                for (x in left until right step 8) {
+                    val index = layout.bufferPosition + y * rowStride + x * pixelStride
+                    if (index < 0 || index + 2 >= buffer.limit()) continue
+                    val red = buffer.get(index).toInt() and 0xff
+                    val green = buffer.get(index + 1).toInt() and 0xff
+                    val blue = buffer.get(index + 2).toInt() and 0xff
+                    redSum += red
+                    greenSum += green
+                    blueSum += blue
+                    if (red >= 250 || green >= 250 || blue >= 250) clipped++
+                    if (red >= PpgFrameQuality.MIN_RED &&
+                        red > green * PpgFrameQuality.RED_GREEN_RATIO &&
+                        red > blue * PpgFrameQuality.RED_BLUE_RATIO
+                    ) fingerPixels++
+                    count++
+                }
+            }
+            if (count == 0) {
+                clearSignal()
+                onUpdate(PpgFrameState(status = "No camera pixels available"))
+                return
+            }
+
+            val optics = FrameOptics(
+                red = redSum.toDouble() / count,
+                green = greenSum.toDouble() / count,
+                blue = blueSum.toDouble() / count,
+                clippedFraction = clipped.toDouble() / count,
+                fingerPixelFraction = fingerPixels.toDouble() / count
+            )
+            val quality = qualityGate.inspect(optics)
+            if (!quality.usable) {
+                // Preserve PpgFrameQuality's movement-recovery counter. Calling
+                // clearSignal() here would reset that counter after the first
+                // movement frame and allow the very next frame back into sampling.
+                resetSampling()
+                onUpdate(PpgFrameState(status = quality.status))
+                return
+            }
+
+            val resampled = resampler.push(image.imageInfo.timestamp, optics.red)
+            if (resampled.reset) {
+                // A first frame, timestamp discontinuity, or long camera stall
+                // starts a fresh signal window without discarding the new baseline.
+                resetAccumulatedSignal()
+                onUpdate(PpgFrameState(status = "Keep still — collecting pulse signal"))
+                return
+            }
+            resampled.samples.forEach { sample ->
+                samples.addLast(sample)
+                while (samples.size > MAX_SAMPLES) samples.removeFirst()
+                samplesSinceEstimate++
+            }
+
+            if (samples.size < REQUIRED_SAMPLES) {
+                onUpdate(PpgFrameState(
+                    status = "Keep still — collecting pulse signal",
+                    progress = (samples.size.toFloat() / REQUIRED_SAMPLES).coerceIn(0f, 1f),
+                    sampleCount = samples.size,
+                    waveform = normalizedWaveform()
+                ))
+                return
+            }
+
+            if (samplesSinceEstimate >= ESTIMATE_INTERVAL_SAMPLES) {
+                samplesSinceEstimate = 0
+                val estimate = estimator.estimate(samples.toList())
+                if (estimate != null && estimate.quality == SignalQuality.USABLE) {
+                    recentBpm.addLast(estimate.bpm)
+                    recentConfidence.addLast(estimate.confidence)
+                    while (recentBpm.size > CONFIRMATION_WINDOWS) recentBpm.removeFirst()
+                    while (recentConfidence.size > CONFIRMATION_WINDOWS) recentConfidence.removeFirst()
+                    if (recentBpm.size >= MIN_CONFIRMATION_WINDOWS) {
+                        val confirmedBpm = recentBpm.toList().sorted()[recentBpm.size / 2]
+                        val confirmedConfidence = recentConfidence.toList().sorted()[recentConfidence.size / 2]
+                        onUpdate(PpgFrameState(
+                            status = "Confirmed across multiple windows — keep still",
+                            bpm = confirmedBpm,
+                            confidence = confirmedConfidence,
+                            progress = 1f,
+                            sampleCount = samples.size,
+                            waveform = normalizedWaveform()
+                        ))
+                    } else {
+                        onUpdate(PpgFrameState(
+                            status = "Confirming pulse across another signal window…",
+                            progress = 1f,
+                            sampleCount = samples.size,
+                            waveform = normalizedWaveform()
+                        ))
+                    }
+                } else {
+                    recentBpm.clear()
+                    recentConfidence.clear()
+                    onUpdate(PpgFrameState(
+                        status = "Signal is weak or irregular — adjust gently and stay still",
+                        progress = 1f,
+                        sampleCount = samples.size,
+                        waveform = normalizedWaveform()
+                    ))
+                }
+            }
+        } catch (_: IllegalStateException) {
+            clearSignal()
+            onUpdate(PpgFrameState(status = "Camera frame unavailable — retrying"))
+        } finally {
+            image.close()
+        }
+    }
+
+    private fun normalizedWaveform(): List<Float> {
+        val values = samples.toList().takeLast(WAVEFORM_SAMPLES)
+        if (values.isEmpty()) return emptyList()
+        val mean = values.average()
+        val centered = values.map { it - mean }
+        val scale = centered.maxOf { abs(it) }.coerceAtLeast(0.01)
+        return centered.map { (it / scale).toFloat().coerceIn(-1f, 1f) }
+    }
+
+    private fun clearSignal() {
+        resetSampling()
+        qualityGate.reset()
+    }
+
+    private fun resetAccumulatedSignal() {
+        samples.clear()
+        recentBpm.clear()
+        recentConfidence.clear()
+        samplesSinceEstimate = 0
+    }
+
+    private fun resetSampling() {
+        resetAccumulatedSignal()
+        resampler.reset()
+    }
+
+    companion object {
+        private const val MAX_FRAME_GAP_NS = 120_000_000L
+        private const val MAX_SAMPLES = 450
+        private const val REQUIRED_SAMPLES = 240
+        private const val ESTIMATE_INTERVAL_SAMPLES = 30
+        private const val WAVEFORM_SAMPLES = 90
+        private const val CONFIRMATION_WINDOWS = 5
+        private const val MIN_CONFIRMATION_WINDOWS = 2
+    }
+}
+
+data class PpgFrameState(
+    val status: String = "Ready",
+    val bpm: Int? = null,
+    val confidence: Double = 0.0,
+    val progress: Float = 0f,
+    val sampleCount: Int = 0,
+    val waveform: List<Float> = emptyList()
+)
+
+
+/** Timestamp-driven interpolation onto a fixed-rate timeline independent of camera jitter. */
+internal data class PpgResampleResult(
+    val samples: List<Double>,
+    val reset: Boolean
+)
+
+internal class PpgTimestampResampler(
+    sampleRateHz: Double = 30.0,
+    private val maxFrameGapNs: Long = 120_000_000L
+) {
+    private val samplePeriodNs: Long
+    private var previousTimestampNs: Long? = null
+    private var previousValue: Double? = null
+    private var nextSampleTimestampNs: Long? = null
+
+    init {
+        require(sampleRateHz.isFinite() && sampleRateHz in 10.0..120.0)
+        require(maxFrameGapNs > 0L)
+        samplePeriodNs = (1_000_000_000.0 / sampleRateHz).toLong().coerceAtLeast(1L)
+    }
+
+    fun push(timestampNs: Long, value: Double): PpgResampleResult {
+        if (timestampNs < 0L || !value.isFinite()) {
+            reset()
+            return PpgResampleResult(emptyList(), reset = true)
+        }
+
+        val previousTime = previousTimestampNs
+        val previousSample = previousValue
+        val nextTime = nextSampleTimestampNs
+        if (previousTime == null || previousSample == null || nextTime == null ||
+            timestampNs <= previousTime || timestampNs - previousTime > maxFrameGapNs
+        ) {
+            startAt(timestampNs, value)
+            return PpgResampleResult(emptyList(), reset = true)
+        }
+
+        val interval = timestampNs - previousTime
+        val output = ArrayList<Double>(4)
+        var next = nextTime
+        while (next <= timestampNs) {
+            val fraction = ((next - previousTime).toDouble() / interval).coerceIn(0.0, 1.0)
+            output += previousSample + (value - previousSample) * fraction
+            if (next > Long.MAX_VALUE - samplePeriodNs) {
+                reset()
+                return PpgResampleResult(output, reset = true)
+            }
+            next += samplePeriodNs
+        }
+
+        previousTimestampNs = timestampNs
+        previousValue = value
+        nextSampleTimestampNs = next
+        return PpgResampleResult(output, reset = false)
+    }
+
+    fun reset() {
+        previousTimestampNs = null
+        previousValue = null
+        nextSampleTimestampNs = null
+    }
+
+    private fun startAt(timestampNs: Long, value: Double) {
+        previousTimestampNs = timestampNs
+        previousValue = value
+        nextSampleTimestampNs = if (timestampNs <= Long.MAX_VALUE - samplePeriodNs) {
+            timestampNs + samplePeriodNs
+        } else {
+            null
+        }
+    }
+}

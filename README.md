@@ -1,2 +1,42 @@
 # Heart-saver
-A pulse oximeter that operates via mobile phone using specific and reliable methods.
+
+Heart-saver is an experimental Android prototype for fingertip photoplethysmography (PPG) using the rear camera and torch.
+
+## Measurement approach
+
+The phone illuminates a fingertip with its camera flash. Camera frames are processed on-device to extract changes in reflected red-channel light associated with pulse-related blood-volume changes. A conservative signal estimator attempts to derive pulse rate (BPM) only when the signal is sufficiently periodic.
+
+## Implemented so far
+
+- [x] Native Android/Kotlin + Jetpack Compose project
+- [x] CameraX rear-camera preview and torch activation
+- [x] Live frame analysis of a central image region
+- [x] Analysis resolution is bounded near 640×480 to limit per-frame memory and CPU work on high-resolution cameras
+- [x] Basic fingertip-presence heuristic and signal collection
+- [x] Autocorrelation-based experimental BPM estimate
+- [x] GitHub Actions debug APK build and unit-test workflow
+- [x] Synthetic signal tests and invalid-input rejection
+- [x] Fixed-rate 30 Hz resampling from camera timestamps
+- [x] Optical checks for fingertip color, low/high brightness, clipped highlights and spatial fingertip coverage
+- [x] Reject abrupt frame-to-frame changes associated with movement or pressure shifts
+- [x] Clear buffered samples after invalid frames so stale readings are not reused
+- [x] Multi-window median confirmation before displaying BPM
+- [x] Sub-sample autocorrelation peak refinement
+- [x] Relative-amplitude calibration and slow illumination-drift removal
+- [x] Local recent measurement history (timestamp, BPM, correlation confidence only)
+- [x] Chronological history summary, min/max/average, and BPM trend plot
+- [x] CSV export of local measurement records
+- [x] Expanded synthetic edge-case tests and physical-device trial protocol
+- [ ] On-device validation against a reference pulse oximeter and ideally ECG
+
+## Build
+
+Run `gradle assembleDebug` with JDK 17 and Gradle 8.9, or use the Android CI workflow.
+
+## Important limitations
+
+**This is not a medical device, pulse oximeter, or ECG.** It estimates pulse rate only; it does not measure SpO2, electrical cardiac activity, or diagnose arrhythmias or other conditions. The image-based fingertip detector and signal pipeline remain experimental and have not yet been validated on a physical phone. Optical thresholds are heuristics; motion rejection is based on abrupt frame-level RGB changes and cannot detect every movement or pressure artifact. The estimator's correlation confidence describes periodic similarity in the sampled signal, not clinical accuracy or confidence in a medical result. Results may be absent or inaccurate depending on camera hardware, flash, fingertip placement, movement, skin perfusion, pressure, and lighting.
+
+## Privacy
+
+Camera frames are processed in memory while a measurement is active. Camera frames are never saved or uploaded. Completed BPM estimates, timestamps, and correlation-confidence values are stored locally on-device (up to 50 records); CSV export is initiated by the user and contains only those values. No health data is uploaded.
